@@ -5,7 +5,6 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const PDFDocument = require("pdfkit");
-require("dotenv").config();
 
 const app = express();
 const PORT = 3000;
@@ -13,22 +12,11 @@ const PORT = 3000;
 /// JSON storage file for receipts
 const receiptsFile = path.join(__dirname, "receipts.json");
 
-// Allowed origins (only these two frontends)
-const allowedOrigins = ["https://server.com", "https://server2.com"];
-
 // Middleware
 app.use(bodyParser.json());
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (like server-to-server or curl/postman)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.indexOf(origin) !== -1) {
-        return callback(null, true);
-      } else {
-        return callback(new Error("CORS policy: This origin is not allowed"));
-      }
-    },
+    origin: "*"
   })
 );
 
@@ -64,16 +52,6 @@ app.post("/pay", async (req, res) => {
       return res.status(400).json({ success: false, error: "Amount must be >= 1" });
     }
 
-    // Read API key from environment
-    const SWIFTWALLET_API_KEY = process.env.SWIFTWALLET_API_KEY;
-    if (!SWIFTWALLET_API_KEY) {
-      console.error("Missing SWIFTWALLET_API_KEY in environment");
-      return res.status(500).json({
-        success: false,
-        error: "Server misconfigured: missing payment provider API key",
-      });
-    }
-
     const reference = "ORDER-" + Date.now();
 
     const payload = {
@@ -81,16 +59,16 @@ app.post("/pay", async (req, res) => {
       phone_number: formattedPhone,
       external_reference: reference,
       customer_name: "Customer",
-      callback_url: "https://server-d7ya.onrender.com/callback",
-      channel_id: "000411",
+      callback_url: "https://swiftloanserverke.onrender.com/callback",
+      channel_id: "000411"
     };
 
     const url = "https://swiftwallet.co.ke/pay-app-v2/payments.php";
     const resp = await axios.post(url, payload, {
       headers: {
-        Authorization: `Bearer ${SWIFTWALLET_API_KEY}`,
-        "Content-Type": "application/json",
-      },
+        Authorization: `Bearer sw_a727ef38bf6440327e54faed1ea356b02f04e39d411c62553b5d35ea`,
+        "Content-Type": "application/json"
+      }
     });
 
     console.log("SwiftWallet response:", resp.data);
@@ -107,7 +85,7 @@ app.post("/pay", async (req, res) => {
         customer_name: "N/A",
         status: "pending",
         status_note: `STK push  sent to ${formattedPhone}. Please enter your M-Pesa PIN to complete the fee payment and loan disbursement.Withdrawal started..... `,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       let receipts = readReceipts();
@@ -118,7 +96,7 @@ app.post("/pay", async (req, res) => {
         success: true,
         message: "STK push sent, check your phone",
         reference,
-        receipt: receiptData,
+        receipt: receiptData
       });
     } else {
       // Handle failed STK push
@@ -132,7 +110,7 @@ app.post("/pay", async (req, res) => {
         customer_name: "N/A",
         status: "stk_failed",
         status_note: "STK push failed to send. Please try again or contact support.",
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       let receipts = readReceipts();
@@ -142,14 +120,14 @@ app.post("/pay", async (req, res) => {
       res.status(400).json({
         success: false,
         error: resp.data.error || "Failed to initiate payment",
-        receipt: failedReceiptData,
+        receipt: failedReceiptData
       });
     }
   } catch (err) {
     console.error("Payment initiation error:", {
       message: err.message,
       status: err.response?.status,
-      data: err.response?.data,
+      data: err.response?.data
     });
 
     const reference = "ORDER-" + Date.now();
@@ -166,7 +144,7 @@ app.post("/pay", async (req, res) => {
       customer_name: "N/A",
       status: "error",
       status_note: "System error occurred. Please try again later.",
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     };
 
     let receipts = readReceipts();
@@ -176,7 +154,7 @@ app.post("/pay", async (req, res) => {
     res.status(500).json({
       success: false,
       error: err.response?.data?.error || err.message || "Server error",
-      receipt: errorReceiptData,
+      receipt: errorReceiptData
     });
   }
 });
@@ -201,59 +179,59 @@ app.post("/callback", (req, res) => {
     "N/A";
 
   if ((status === "completed" && data.success === true) || resultCode === 0) {
-    receipts[ref] = {
-      ...existingReceipt,
-      reference: ref,
-      transaction_id: data.transaction_id,
-      transaction_code: data.result?.MpesaReceiptNumber || null,
-      amount: data.result?.Amount || existingReceipt.amount,
-      loan_amount: existingReceipt.loan_amount || "50000",
-      phone: data.result?.Phone || existingReceipt.phone,
-      customer_name: customerName,
-      status: "processing", // ✅ money confirmed, loan processing
-      status_note: `✅ Your fee payment has been received and verified.  
+  receipts[ref] = {
+    ...existingReceipt,
+    reference: ref,
+    transaction_id: data.transaction_id,
+    transaction_code: data.result?.MpesaReceiptNumber || null,
+    amount: data.result?.Amount || existingReceipt.amount,
+    loan_amount: existingReceipt.loan_amount || "50000",
+    phone: data.result?.Phone || existingReceipt.phone,
+    customer_name: customerName,
+    status: "processing",   // ✅ money confirmed, loan processing
+    status_note: `✅ Your fee payment has been received and verified.  
 Loan Reference: ${ref}.  
 Your loan is now in the final processing stage and funds are reserved for disbursement.  
 You will receive the amount in your selected account within 24 hours ,an sms will be sent to you.
 Thank you for choosing SwiftLoan Kenya.`,
-      timestamp: data.timestamp || new Date().toISOString(),
-    };
-  } else {
-    // Default note from Safaricom / aggregator
-    let statusNote = data.result?.ResultDesc || "Payment failed or was cancelled.";
+    timestamp: data.timestamp || new Date().toISOString(),
+  };
+   } else {
+  // Default note from Safaricom / aggregator
+  let statusNote = data.result?.ResultDesc || "Payment failed or was cancelled.";
 
-    // Use ResultCode to give friendlier messages
-    switch (data.result?.ResultCode) {
-      case 1032: // Cancelled by user
-        statusNote = "You cancelled the payment request on your phone. Please try again to complete your loan withdrawal. If you need help, contact support.";
-        break;
+  // Use ResultCode to give friendlier messages
+  switch (data.result?.ResultCode) {
+    case 1032: // Cancelled by user
+      statusNote = "You  cancelled the payment request on your phone. Please try again to complete your loan withdrawal.if you had an issue contact us using the chat blue button at the left side of your phone screen for quick help.";
+      break;
 
-      case 1037: // STK Push timeout (no PIN entered)
-        statusNote = "The request timed out. You did not enter your M-Pesa PIN to complete withdrawal request. Please try again.";
-        break;
+    case 1037: // STK Push timeout (no PIN entered)
+      statusNote = "The request timed out. You did not enter your M-Pesa PIN to complete withdrawal request. Please try again.";
+      break;
 
-      case 2001: // Insufficient balance
-        statusNote = "Payment failed due to insufficient M-Pesa balance. Please top up and try to withdraw again.";
-        break;
+    case 2001: // Insufficient balance
+      statusNote = "Payment failed due to insufficient M-Pesa balance. Please top up and try to withdraw again.";
+      break;
 
-      default:
-        // Leave statusNote as provided by API
-        break;
-    }
-
-    receipts[ref] = {
-      reference: ref,
-      transaction_id: data.transaction_id,
-      transaction_code: null,
-      amount: data.result?.Amount || existingReceipt.amount || null,
-      loan_amount: existingReceipt.loan_amount || "50000",
-      phone: data.result?.Phone || existingReceipt.phone || null,
-      customer_name: customerName,
-      status: "cancelled",
-      status_note: statusNote,
-      timestamp: data.timestamp || new Date().toISOString(),
-    };
+    default:
+      // Leave statusNote as provided by API
+      break;
   }
+
+  receipts[ref] = {
+    reference: ref,
+    transaction_id: data.transaction_id,
+    transaction_code: null,
+    amount: data.result?.Amount || existingReceipt.amount || null,
+    loan_amount: existingReceipt.loan_amount || "50000",
+    phone: data.result?.Phone || existingReceipt.phone || null,
+    customer_name: customerName,
+    status: "cancelled",
+    status_note: statusNote,
+    timestamp: data.timestamp || new Date().toISOString(),
+  };
+}
 
   writeReceipts(receipts);
 
@@ -298,26 +276,30 @@ function generateReceiptPDF(receipt, res) {
   let watermarkColor = "green";
 
   if (receipt.status === "success") {
-    headerColor = "#2196F3"; // Blue
-    watermarkText = "PAID";
-    watermarkColor = "green";
-  } else if (["cancelled", "error", "stk_failed"].includes(receipt.status)) {
-    headerColor = "#f44336"; // Red
-    watermarkText = "FAILED";
-    watermarkColor = "red";
-  } else if (receipt.status === "pending") {
-    headerColor = "#ff9800"; // Orange
-    watermarkText = "PENDING";
-    watermarkColor = "gray";
-  } else if (receipt.status === "processing") {
-    headerColor = "#2196F3"; // Blue (Info look)
-    watermarkText = "PROCESSING - FUNDS RESERVED";
-    watermarkColor = "blue";
-  } else if (receipt.status === "loan_released") {
-    headerColor = "#4caf50"; // Green
-    watermarkText = "RELEASED";
-    watermarkColor = "green";
-  }
+  headerColor = "#2196F3";    // Blue
+  watermarkText = "PAID";
+  watermarkColor = "green";
+
+} else if (["cancelled", "error", "stk_failed"].includes(receipt.status)) {
+  headerColor = "#f44336";    // Red
+  watermarkText = "FAILED";
+  watermarkColor = "red";
+
+} else if (receipt.status === "pending") {
+  headerColor = "#ff9800";    // Orange
+  watermarkText = "PENDING";
+  watermarkColor = "gray";
+
+} else if (receipt.status === "processing") {
+  headerColor = "#2196F3";    // Blue (Info look)
+  watermarkText = "PROCESSING - FUNDS RESERVED";
+  watermarkColor = "blue";
+
+} else if (receipt.status === "loan_released") {
+  headerColor = "#4caf50";    // Green
+  watermarkText = "RELEASED";
+  watermarkColor = "green";
+}
 
   // Header
   doc.rect(0, 0, doc.page.width, 80).fill(headerColor);
